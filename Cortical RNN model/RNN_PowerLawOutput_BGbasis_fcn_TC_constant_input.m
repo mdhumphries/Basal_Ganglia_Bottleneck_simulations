@@ -2,11 +2,9 @@
 % and its modification by thalamic and cortical input
 % adding basis functions of input from BG to thalamus
 %
-% NOTE: this does not use frozen noise, so the results will differ on each
-% execution, and will not reproduce the exact result in the paper. Rather,
-% this demonstrates the robustness of those results.
+% Refactored: 3/3/2022
 % 
-% Mark Humphries 3/3/2022
+% Mark Humphries 
 
 clearvars; close all
 
@@ -17,37 +15,28 @@ else
     addpath('/Users/mqbssmhg/Documents/GitHub/WriteSimulationData/');
 end
 
-%% parameters for the RNN
+%% parameters for the RNN - overwrite SOC specific stuff with random network
+run RNN_SOC_BG_TC_common_parameters
 
 % load network
-% networkID = 'Random_Network_20220210T104722';
-networkID = 'SOC_Network_20210927T141434'; 
+% networkID = 'Random_Network_20220210T104722';  % random 50:50 E:I
+% networkID = 'Random_Network_20240610T160119_80_20'; % random 80:20 E:I
+networkID = 'Random_Network_20240611T111018_80_20'; % another random 80:20 E:I
+% networkID = 'SOC_Network_20240610T155910_80_20'; % SOC optimised 80:20 E:I
 
 load(['Network building/' networkID]);
-
-if exist('optimW','var')
-    W = optimW;  % rename optimised weight matrix from SOC network
-end
-
-% neuron parameters
-pars.ts = 20;     % network time constant
-
-% parameters of the RNN input
-pars.duration = [1000,2000];  % time-window of stepped input (ms)
-pars.range = [0, 1];    % possible range of the stepped input 
-pars.I_background = 0.1; % spontaneous input
-
-% solution parameters
-pars.dt = 0.1;     % time-step, milliseconds
-pars.Tmax = pars.duration(end) + pars.ts/pars.dt*3;      % length of simulation, milliseconds
 
 % set up output function
 pars.output_type = 'power';
 pars.output_arg1 = 0.1;            % scaling of output
 pars.output_arg2 = 2;               % exponent of power function
 
-% analysis
-pars.nPCs = 5;      % how many PCs of output to compute distances on
+
+if ispc
+    savepath = 'C:\Users\lpzmdh\Dropbox\Simulations\Results\BG Mean-Field Model\Individual Sims\Basis functions\';
+else
+    savepath = '/Users/mqbssmhg/Dropbox/Simulations/Results/BG Mean-Field Model/Individual Sims/Basis functions/';
+end
 
 
 %% parameters for the TC and BG input to the RNN
@@ -95,7 +84,7 @@ for iInputs = 1:pars.n_BG_tests
     BG_input_per_thalamic_neuron = pars.BG_inputs_to_thalamus(:,iInputs)' * pars.BG_basis_fcn_Weights; 
     % subtract from baseline the total BG input to each thalamic neuron
     ThalamicOutput = pars.ThalamicBaseline - BG_input_per_thalamic_neuron;
-  
+    % keyboard
     % assign new thalamic output to input vector
     pars.InputVectors(:,iInputs) = I_initial;
     pars.InputVectors(pars.ixThalamicInput,iInputs) = ThalamicOutput;
@@ -127,7 +116,7 @@ for iBG = 1:pars.n_BG_tests
             I = I + pars.InputVectors(:,iBG);
         end
         % update activity
-        a(:,iTime) = a(:,iTime-1) + pars.dt * (-a(:,iTime-1) + I + W*r(:,iTime-1)) ./ pars.ts;
+        a(:,iTime) = a(:,iTime-1) + pars.dt * (-a(:,iTime-1) + I + optimW*r(:,iTime-1)) ./ pars.ts;
 
         % update output
         r(:,iTime) = neuron_output(a(:,iTime),pars.output_type,pars.output_arg1,pars.output_arg2);
@@ -153,6 +142,14 @@ end
 Data.maxdistance = zeros(pars.n_BG_tests);
 for iBG = 1:pars.n_BG_tests
     for jBG = iBG+1:pars.n_BG_tests
+%             tic
+%             for iTime = 1:tSteps
+%                 % distance = sqrt(sum((a-b)^2))
+%                 diffs = squeeze(bsxfun(@minus,Data.temporalPCs(iBatch,iAngle,iTime,:),Data.temporalPCs(iBatch,jAngle,iTime,:)));
+%                 distance(iAngle,jAngle,iTime) = sqrt(sum(diffs.^2));
+%             end
+%            toc
+
         % compute Euclidean distance between trajectories
         for iPC = 1:pars.nPCs
             % for each PC compute the difference between the
@@ -175,15 +172,24 @@ Data.InputVectorDistances = squareform(pdist(pars.InputVectors'));
 Data.BGOutputDistances = squareform(pdist(pars.BG_inputs_to_thalamus'));
 
 %% save data
-save('RandomNetwork_BG_BasisFcn_','Data','pars','tSteps','tInput');
+F = makeRecordOfSimulationData('RandomNetwork_BG_BasisFcn_',savepath,Data,pars,tSteps,tInput,networkID);
 
 %% plot checks
+rate_color_map = brewermap(15,'Greys');
+figure
+imagesc(Data.rStore')
+colormap(rate_color_map)
+colorbar
+xlabel('Time')
+ylabel('Neuron')
+
 
 PCcmap = brewermap(pars.n_BG_tests,'PuOr');
 % plot PCs on same figure
+nPlots = 3;
 figure
-for iP = 1:pars.n_BG_tests
-    plot(squeeze(Data.temporalPCs(iP,:,2)),squeeze(Data.temporalPCs(iP,:,3)),'Color',PCcmap(iP,:));
+for iP = 1:nPlots
+    plot3(squeeze(Data.temporalPCs(iP,:,1)),squeeze(Data.temporalPCs(iP,:,2)),squeeze(Data.temporalPCs(iP,:,3)),'Color',PCcmap(iP,:));
     hold on
 end
 
@@ -202,7 +208,6 @@ end
 xlabel('Distance between BG output vectors')
 ylabel('Max distance between projections')
 
-rho = corr(Data.BGOutputDistances(:),Data.maxdistance(:),'type','Spearman');
 
 
 
